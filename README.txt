@@ -1,1 +1,1 @@
-This is a python application to scan Pokémon TCG cards and add them into your collection to see how much it is worth
+This is a python application to scan Pokémon TCG cards and add them into your collection to see how much it is worth. It stores what you have in an online collection as well.
