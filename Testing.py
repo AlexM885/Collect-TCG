@@ -1,22 +1,21 @@
-import cv2
-import pytesseract
+from PIL import Image
+from pytesseract import pytesseract
 
-pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
+#path to tesseract.exe and img
+path_to_tesseract = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
+image_path =  r"C:\Users\AlexF\Downloads\Charizard_sample_card.jpg"
 
-def extract_text_from_card(image_path):
-    image = cv2.imread(image_path)
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
-    # Resize image
-    scale = 3  # or 3 if needed
-    resized = cv2.resize(gray, None, fx=scale, fy=scale, interpolation=cv2.INTER_LINEAR)
-    _, thresh = cv2.threshold(blurred, 150, 255, cv2.THRESH_BINARY)
-    
-    text = pytesseract.image_to_string(thresh)
-    return text
+#create image obj
+img = Image.open(image_path)
 
-# Test it on a sample image
-if __name__ == "__main__":
-    path = r"C:\Users\AlexF\Downloads\Charizard_sample_card.jpg"  # Replace with your card image path
-    result = extract_text_from_card(path)
-    print("Extracted Text:\n", result)
+#Providing the tesseract executable location to pytesseract library
+pytesseract.tesseract_cmd = path_to_tesseract
+
+# Passing the image object to 
+# image_to_string() function
+# This function will
+# extract the text from the image
+text = pytesseract.image_to_string(img)
+
+# Displaying the extracted text
+print(text[:-1])
