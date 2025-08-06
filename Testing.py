@@ -1,45 +1,72 @@
-from PIL import Image
+from PIL import Image, ImageEnhance, ImageFilter
 from pytesseract import pytesseract
 import re
+import cv2
+import numpy as np
 
-#path to tesseract.exe and img
-path_to_tesseract = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
-image_path =  r"C:\Users\AlexF\Downloads\Charizard_sample_card.jpg"
-
-#create image obj
-img = Image.open(image_path)
-
-#providing the tesseract executable location to pytesseract library
-pytesseract.tesseract_cmd = path_to_tesseract
-
-#turn to string
-text = pytesseract.image_to_string(img)
-
-#displaying the extracted text
-print(text[:-1])
-
-# Extract Pokemon card number (format: number/total)
-def extract_pokemon_number(text):
-    # Pattern to match number/number format
-    pattern = r'\b(\d+)/(\d+)\b'
+def preprocess_for_results_7_and_15(image_path):
+    """Only the preprocessing methods needed for results 7 and 15"""
+    img = cv2.imread(image_path)
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    gray = cv2.resize(gray, None, fx=3, fy=3, interpolation=cv2.INTER_CUBIC)
+    gray = cv2.GaussianBlur(gray, (3, 3), 0)
     
-    # Find all matches
-    matches = re.findall(pattern, text)
+    # Method 1: Adaptive threshold
+    thresh1 = cv2.adaptiveThreshold(
+        gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 15, 8
+    )
     
-    if matches:
-        # Return the last match (usually the card number is at the end)
-        card_num, total_cards = matches[-1]
-        return f"{card_num}/{total_cards}", int(card_num), int(total_cards)
-    else:
-        return None, None, None
+    # Method 2: OTSU thresholding  
+    _, thresh2 = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    
+    # Method 3: Manual threshold
+    _, thresh3 = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY)
+    
+    # Method 4: Raw grayscale
+    raw_gray = gray
+    
+    return [thresh1, thresh2, thresh3, raw_gray]
 
-# Extract the card number
-card_number, card_num, total_cards = extract_pokemon_number(text)
+def extract_with_results_7_and_15_configs(processed_images):
+    """Use the EXACT configurations from the identification code for results 7 and 15 - Returns combined text string"""
+    
+    # PLACEHOLDER - Replace these with the exact values from your identification run:
+    result_7_img_index = 1  # Replace with actual index from identification
+    result_7_config = r'--oem 3 --psm 11'  # Replace with exact config from identification
+    
+    result_15_img_index = 3  # Replace with actual index from identification
+    result_15_config = r'--oem 3 --psm 11'  # Replace with exact config from identification
+    
+    combined_text = ""
+    
+    # Extract text from result 7 configuration
+    try:
+        text_7 = pytesseract.image_to_string(processed_images[result_7_img_index], config=result_7_config)
+        if text_7.strip():
+            combined_text += text_7.strip() + "\n"
+    except Exception as e:
+        print(f"Error in result 7: {str(e)}")
+    
+    # Extract text from result 15 configuration  
+    try:
+        text_15 = pytesseract.image_to_string(processed_images[result_15_img_index], config=result_15_config)
+        if text_15.strip():
+            combined_text += text_15.strip() + "\n"
+    except Exception as e:
+        print(f"Error in result 15: {str(e)}")
+    
+    return combined_text.strip()
 
-if card_number:
-    print(f"Pokemon Card Number: {card_number}")
-else:
-    print("No Pokemon card number found in the format 'X/Y'")
-
-
-extract_pokemon_number(text)
+def get_ocr_text(image_path):
+    """Main function to extract OCR text from image"""
+    # Configuration
+    path_to_tesseract = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
+    pytesseract.tesseract_cmd = path_to_tesseract
+    
+    # Preprocess image 
+    processed_images = preprocess_for_results_7_and_15(image_path)
+    
+    # Extract text using optimized configurations
+    ocr_text = extract_with_results_7_and_15_configs(processed_images)
+    
+    return ocr_text
