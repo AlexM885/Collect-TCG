@@ -165,10 +165,6 @@ POKEMON_NAMES = [
     "Iron Boulder", "Iron Crown", "Terapagos", "Pecharunt"
 ]
 
-
-
-
-
 def extract_card_number(text):
     """Extract Pokemon card number from OCR text"""
     patterns = [
@@ -184,7 +180,7 @@ def extract_card_number(text):
         matches = re.findall(pattern, text, re.IGNORECASE)
         for match in matches:
             card_num, total_cards = match
-            # Validate the numbers are reasonable for Pokemon cards
+            # limit make sure it is a possible set
             if 1 <= int(card_num) <= 999 and 10 <= int(total_cards) <= 999:
                 return {
                     'number': f"{card_num}/{total_cards}",
@@ -192,6 +188,54 @@ def extract_card_number(text):
                     'total_cards': int(total_cards)
                 }
     return None
+
+def extract_card_name(text):
+    """Extract card name from OCR text - works for Pokemon, items, trainers, etc."""
+    lines = text.split('\n')
+    
+    # Check first few lines for card type keywords
+    card_type_keywords = ['item', 'tem', 'supporter', 'stadium', 'energy']
+    
+    # Look for card type keywords in first 5 lines (increased from 3)
+    for i, line in enumerate(lines[:5]):
+        line_lower = line.lower().strip()
+        
+        # Check if this line contains a card type keyword
+        if any(keyword in line_lower for keyword in card_type_keywords):
+            print(f"Debug: Found keyword in line {i}: '{line.strip()}'")
+            
+            # Found a card type, now look for the name in subsequent lines
+            for j in range(i + 1, min(len(lines), i + 8)):  # Check more lines after keyword
+                next_line = lines[j].strip()
+                print(f"Debug: Checking line {j}: '{next_line}'")
+                
+                if not next_line:  # Skip empty lines
+                    continue
+                    
+                # Clean the line by removing common OCR artifacts
+                cleaned_line = next_line.lstrip('_-|[]()').rstrip('_-|[]()').strip()
+                print(f"Debug: Cleaned line: '{cleaned_line}'")
+                
+                # Check if cleaned line looks like a card name
+                if cleaned_line and 2 <= len(cleaned_line) <= 50:
+                    # Count letters and spaces
+                    letter_space_count = sum(c.isalpha() or c.isspace() for c in cleaned_line)
+                    total_chars = len(cleaned_line)
+                    percentage = letter_space_count / total_chars if total_chars > 0 else 0
+                    
+                    print(f"Debug: Letter/space percentage: {percentage:.2f}")
+                    
+                    # More lenient check - just needs to have some letters
+                    if letter_space_count >= 2 and percentage >= 0.5:
+                        print(f"Debug: Found card name: '{cleaned_line}'")
+                        return {
+                            'name': cleaned_line,
+                            'card_type': 'trainer/item',
+                            'confidence': 'high'
+                        }
+    
+    # If no card type keywords found, try Pokemon name extraction
+    return extract_pokemon_name(text)
 
 def extract_pokemon_name(text):
     """Extract Pokemon name from OCR text using the predefined list - returns first match found by position"""
@@ -218,14 +262,16 @@ def extract_pokemon_name(text):
                     'name': pokemon,
                     'confidence': 'high',
                     'match_type': 'exact_word_boundary',
-                    'position': position
+                    'position': position,
+                    'card_type': 'pokemon'
                 })
             elif pokemon_upper in text_upper:
                 position_matches.append({
                     'name': pokemon,
                     'confidence': 'medium', 
                     'match_type': 'substring_match',
-                    'position': position
+                    'position': position,
+                    'card_type': 'pokemon'
                 })
     
     # If we have exact matches, return the earliest one
@@ -242,7 +288,7 @@ def extract_pokemon_name(text):
                 unique_names.append(match)
                 seen_names.add(match['name'])
         
-        return unique_names
+        return unique_names[0] if unique_names else None
     
     # If no exact matches, try fuzzy matching on individual lines (check lines in order)
     for line_idx, line in enumerate(lines[:5]):  # Check first 5 lines
@@ -256,16 +302,17 @@ def extract_pokemon_name(text):
                     matches = sum(1 for a, b in zip(line_clean, pokemon_upper) if a == b)
                     similarity = matches / max(len(line_clean), len(pokemon_upper))
                     if similarity >= 0.7:  # 70% similarity threshold
-                        return [{
+                        return {
                             'name': pokemon,
                             'confidence': 'low',
                             'match_type': 'fuzzy_match',
                             'similarity': similarity,
                             'matched_text': line.strip(),
-                            'line_number': line_idx
-                        }]
+                            'line_number': line_idx,
+                            'card_type': 'pokemon'
+                        }
     
-    return []
+    return None
 
 def parse_pokemon_card(image_path):
     """Main function to parse Pokemon card and extract name and card number"""
@@ -292,48 +339,47 @@ def parse_pokemon_card(image_path):
     else:
         print("❌ No card number found")
     
-    # Extract Pokemon name
-    print("\n🐾 Extracting Pokemon name...")
-    name_matches = extract_pokemon_name(ocr_text)
+    # Extract card name (Pokemon, item, trainer, etc.)
+    print("\n🎯 Extracting card name...")
+    card_match = extract_card_name(ocr_text)
     
-    pokemon_name = None
-    if name_matches:
-        # Always pick the first match (earliest in text)
-        first_match = name_matches[0]
-        pokemon_name = first_match['name']
+    card_name = None
+    if card_match:
+        card_name = card_match['name']
+        card_type = card_match.get('card_type', 'unknown')
         
-        print(f"✅ Pokemon name found: {pokemon_name}")
+        print(f"✅ Card name found: {card_name}")
+        print(f"   Card type: {card_type}")
+        
         confidence_emoji = {"high": "🟢", "medium": "🟡", "low": "🔴"}
-        emoji = confidence_emoji.get(first_match['confidence'], "⚪")
-        print(f"   {emoji} Confidence: {first_match['confidence']}")
-        print(f"   Match type: {first_match['match_type']}")
-        if 'similarity' in first_match:
-            print(f"   Similarity: {first_match['similarity']:.2f}, Matched text: '{first_match['matched_text']}'")
-        if 'position' in first_match:
-            print(f"   Position in text: {first_match['position']}")
+        emoji = confidence_emoji.get(card_match['confidence'], "⚪")
+        print(f"   {emoji} Confidence: {card_match['confidence']}")
         
-        # Show other matches found (but not used)
-        if len(name_matches) > 1:
-            print(f"   Note: {len(name_matches)-1} other Pokemon name(s) found later in text (ignored)")
+        if 'match_type' in card_match:
+            print(f"   Match type: {card_match['match_type']}")
+        if 'similarity' in card_match:
+            print(f"   Similarity: {card_match['similarity']:.2f}, Matched text: '{card_match['matched_text']}'")
+        if 'position' in card_match:
+            print(f"   Position in text: {card_match['position']}")
     else:
-        print("❌ No Pokemon name found in predefined list")
+        print("❌ No card name found")
     
-    return pokemon_name, card_info
+    return card_name, card_info
 
 def main():
     # Example usage
-    image_path = r"C:\Users\AlexF\Downloads\steelixcard.jpg"
+    image_path = r"C:\Users\AlexF\Downloads\pokeballcard.jpg"
     
-    pokemon_name, card_info = parse_pokemon_card(image_path)
+    card_name, card_info = parse_pokemon_card(image_path)
     
     print("\n" + "=" * 50)
     print("📋 FINAL RESULTS:")
     print("=" * 50)
     
-    if pokemon_name:
-        print(f"🐾 Pokemon: {pokemon_name}")
+    if card_name:
+        print(f"🎯 Card Name: {card_name}")
     else:
-        print("🐾 Pokemon: Unknown")
+        print("🎯 Card Name: Unknown")
     
     if card_info:
         print(f"🔢 Card: {card_info['number']}")
@@ -342,5 +388,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
