@@ -165,6 +165,79 @@ POKEMON_NAMES = [
     "Iron Boulder", "Iron Crown", "Terapagos", "Pecharunt"
 ]
 
+# Card type patterns ordered by specificity (most specific first)
+CARD_TYPE_PATTERNS = [
+    (r'\bVMAX\b', 'VMAX'),
+    (r'\bV\b', 'V'),
+    (r'\bGX\b', 'GX'),
+    (r'\bEX\b', 'EX'),
+    (r'\bTAG TEAM\b', 'TAG TEAM'),
+    (r'\bBREAK\b', 'BREAK'),
+    (r'\bPRISM STAR\b', 'PRISM STAR'),
+    (r'\b⭐\b', 'PRISM STAR'),  # Star symbol
+]
+
+def extract_year_from_text(text):
+    """Extract copyright year from OCR text by looking for @ symbol and 19XX/20XX pattern"""
+    # Look for @ symbol followed by year pattern
+    year_patterns = [
+        r'@.*?(19\d{2})',       # @ followed by 19XX
+        r'@.*?(20\d{2})',       # @ followed by 20XX
+        r'©.*?(19\d{2})',       # © followed by 19XX (alternative copyright symbol)
+        r'©.*?(20\d{2})',       # © followed by 20XX
+        r'\(c\).*?(19\d{2})',   # (c) followed by 19XX
+        r'\(c\).*?(20\d{2})',   # (c) followed by 20XX
+    ]
+    
+    for pattern in year_patterns:
+        matches = re.findall(pattern, text, re.IGNORECASE | re.DOTALL)
+        if matches:
+            # Return the first valid year found
+            year = int(matches[0])
+            if 1995 <= year <= 2030:  # Reasonable range for Pokemon cards
+                return year
+    
+    return None
+
+def detect_pokemon_card_type(text, pokemon_name=None):
+    """Detect special Pokemon card types (EX, V, VMAX, GX, etc.)"""
+    text_upper = text.upper()
+    detected_types = []
+    
+    # If we have a pokemon name, look specifically around it
+    if pokemon_name:
+        pokemon_upper = pokemon_name.upper()
+        # Find all occurrences of the Pokemon name
+        pokemon_positions = []
+        start = 0
+        while True:
+            pos = text_upper.find(pokemon_upper, start)
+            if pos == -1:
+                break
+            pokemon_positions.append(pos)
+            start = pos + 1
+        
+        # Check for card types near each Pokemon name occurrence
+        for pos in pokemon_positions:
+            # Check text around the Pokemon name (before and after)
+            start_check = max(0, pos - 20)
+            end_check = min(len(text), pos + len(pokemon_upper) + 20)
+            surrounding_text = text_upper[start_check:end_check]
+            
+            for pattern, card_type in CARD_TYPE_PATTERNS:
+                if re.search(pattern, surrounding_text):
+                    if card_type not in detected_types:
+                        detected_types.append(card_type)
+    
+    # Also do a general search in the entire text
+    for pattern, card_type in CARD_TYPE_PATTERNS:
+        if re.search(pattern, text_upper):
+            if card_type not in detected_types:
+                detected_types.append(card_type)
+    
+    # Return the most specific type found (first in our ordered list)
+    return detected_types[0] if detected_types else None
+
 def extract_card_number(text):
     """Extract Pokemon card number from OCR text"""
     patterns = [
@@ -258,20 +331,28 @@ def extract_pokemon_name(text):
             # Additional validation - make sure it's not part of a larger word
             pattern = r'\b' + re.escape(pokemon_upper) + r'\b'
             if re.search(pattern, text_upper):
+                # Detect card type for this Pokemon
+                card_subtype = detect_pokemon_card_type(text, pokemon)
+                
                 position_matches.append({
                     'name': pokemon,
                     'confidence': 'high',
                     'match_type': 'exact_word_boundary',
                     'position': position,
-                    'card_type': 'pokemon'
+                    'card_type': 'pokemon',
+                    'pokemon_type': card_subtype
                 })
             elif pokemon_upper in text_upper:
+                # Detect card type for this Pokemon
+                card_subtype = detect_pokemon_card_type(text, pokemon)
+                
                 position_matches.append({
                     'name': pokemon,
                     'confidence': 'medium', 
                     'match_type': 'substring_match',
                     'position': position,
-                    'card_type': 'pokemon'
+                    'card_type': 'pokemon',
+                    'pokemon_type': card_subtype
                 })
     
     # If we have exact matches, return the earliest one
@@ -302,6 +383,9 @@ def extract_pokemon_name(text):
                     matches = sum(1 for a, b in zip(line_clean, pokemon_upper) if a == b)
                     similarity = matches / max(len(line_clean), len(pokemon_upper))
                     if similarity >= 0.7:  # 70% similarity threshold
+                        # Detect card type for this Pokemon
+                        card_subtype = detect_pokemon_card_type(text, pokemon)
+                        
                         return {
                             'name': pokemon,
                             'confidence': 'low',
@@ -309,13 +393,14 @@ def extract_pokemon_name(text):
                             'similarity': similarity,
                             'matched_text': line.strip(),
                             'line_number': line_idx,
-                            'card_type': 'pokemon'
+                            'card_type': 'pokemon',
+                            'pokemon_type': card_subtype
                         }
     
     return None
 
 def parse_pokemon_card(image_path):
-    """Main function to parse Pokemon card and extract name and card number"""
+    """Main function to parse Pokemon card and extract name, card number, and year"""
     print("🎴 Pokemon Card Parser")
     print("=" * 50)
     
@@ -325,7 +410,7 @@ def parse_pokemon_card(image_path):
     
     if not ocr_text:
         print("❌ No text could be extracted from the image")
-        return None, None
+        return None, None, None
     
     print(f"📝 OCR Text:\n{repr(ocr_text)}\n")
     
@@ -339,6 +424,15 @@ def parse_pokemon_card(image_path):
     else:
         print("❌ No card number found")
     
+    # Extract year
+    print("\n📅 Extracting copyright year...")
+    year = extract_year_from_text(ocr_text)
+    
+    if year:
+        print(f"✅ Copyright Year: {year}")
+    else:
+        print("❌ No copyright year found")
+    
     # Extract card name (Pokemon, item, trainer, etc.)
     print("\n🎯 Extracting card name...")
     card_match = extract_card_name(ocr_text)
@@ -350,6 +444,16 @@ def parse_pokemon_card(image_path):
         
         print(f"✅ Card name found: {card_name}")
         print(f"   Card type: {card_type}")
+        
+        # Show Pokemon-specific type if it's a Pokemon card
+        if card_type == 'pokemon' and card_match.get('pokemon_type'):
+            pokemon_type = card_match['pokemon_type']
+            print(f"   Pokemon type: {pokemon_type}")
+            # Update the display name to include the type
+            display_name = f"{card_name} {pokemon_type}"
+            print(f"   Full card name: {display_name}")
+        
+        card_type = pokemon_type
         
         confidence_emoji = {"high": "🟢", "medium": "🟡", "low": "🔴"}
         emoji = confidence_emoji.get(card_match['confidence'], "⚪")
@@ -364,13 +468,13 @@ def parse_pokemon_card(image_path):
     else:
         print("❌ No card name found")
     
-    return card_name, card_info
+    return card_name, card_type, card_info, year
 
 def main():
     # Example usage
-    image_path = r"C:\Users\AlexF\Downloads\pokeballcard.jpg"
+    image_path = r"C:\Users\AlexF\Downloads\venesaurEX.jpg"
     
-    card_name, card_info = parse_pokemon_card(image_path)
+    card_name, card_type, card_info, year = parse_pokemon_card(image_path)
     
     print("\n" + "=" * 50)
     print("📋 FINAL RESULTS:")
@@ -385,6 +489,11 @@ def main():
         print(f"🔢 Card: {card_info['number']}")
     else:
         print("🔢 Card: Unknown")
+    
+    if year:
+        print(f"📅 Year: {year}")
+    else:
+        print("📅 Year: Unknown")
 
 if __name__ == "__main__":
     main()
